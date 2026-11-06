@@ -65,7 +65,8 @@ export class MetadataFetcher {
       }
       const containerTitle = message['container-title'] as Array<string>
       paper.journal = (containerTitle !== undefined && containerTitle.length > 0) ? containerTitle[0] : ''
-      paper.abstract = (message['abstract'] as string) ?? ''
+      const rawAbstract = (message['abstract'] as string) ?? ''
+      paper.abstract = MetadataFetcher.stripXmlTags(rawAbstract)
       const now = Date.now()
       paper.dateAdded = now
       paper.dateModified = now
@@ -94,6 +95,11 @@ export class MetadataFetcher {
       hilog.error(DOMAIN, TAG, `arXiv fetch error: ${(e as Error).message}`)
       return undefined
     }
+  }
+
+  private static stripXmlTags(text: string): string {
+    return text.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim()
   }
 
   private static parseArxivResponse(xmlStr: string, arxivId: string): Paper | undefined {

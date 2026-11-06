@@ -18,9 +18,9 @@ export class CitationService {
   private static generateBibTeX(paper: Paper): string {
     const authors = paper.getAuthorList()
     const firstAuthor = authors.length > 0 ? authors[0] : 'Unknown'
-    const key = firstAuthor.split(' ').pop() ?? firstAuthor
-    const yearPart = paper.year > 0 ? `${paper.year}` : 'n.d.'
-    const citeKey = `${key}${yearPart}`
+    const keyWord = firstAuthor.split(' ').pop() ?? firstAuthor
+    const key = keyWord.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '').toLowerCase()
+    const citeKey = `${key.length > 0 ? key : 'unknown'}${paper.year > 0 ? paper.year : 'nd'}`
     const authorStr = authors.join(' and ')
     let bibtex = `@article{${citeKey},\n`
     bibtex += `  title={${paper.title}},\n`

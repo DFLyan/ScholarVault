@@ -31,7 +31,8 @@ const CREATE_PAPERS_TABLE = `CREATE TABLE IF NOT EXISTS papers (
   isPinned INTEGER DEFAULT 0,
   citationCount INTEGER DEFAULT -1,
   lastReadPage INTEGER DEFAULT 0,
-  lastReadTime INTEGER DEFAULT 0
+  lastReadTime INTEGER DEFAULT 0,
+  sortOrder INTEGER DEFAULT 0
 )`
 
 const CREATE_CATEGORIES_TABLE = `CREATE TABLE IF NOT EXISTS categories (
@@ -72,7 +73,8 @@ const PAPER_NEW_COLUMNS: Array<Array<string>> = [
   ['isPinned', 'INTEGER DEFAULT 0'],
   ['citationCount', 'INTEGER DEFAULT -1'],
   ['lastReadPage', 'INTEGER DEFAULT 0'],
-  ['lastReadTime', 'INTEGER DEFAULT 0']
+  ['lastReadTime', 'INTEGER DEFAULT 0'],
+  ['sortOrder', 'INTEGER DEFAULT 0']
 ]
 
 export class DatabaseHelper {
@@ -148,7 +150,8 @@ export class DatabaseHelper {
       isPinned: paper.isPinned,
       citationCount: paper.citationCount,
       lastReadPage: paper.lastReadPage,
-      lastReadTime: paper.lastReadTime
+      lastReadTime: paper.lastReadTime,
+      sortOrder: paper.sortOrder
     }
     try {
       const rowId = await this.store.insert('papers', valueBucket)
@@ -184,7 +187,8 @@ export class DatabaseHelper {
       isPinned: paper.isPinned,
       citationCount: paper.citationCount,
       lastReadPage: paper.lastReadPage,
-      lastReadTime: paper.lastReadTime
+      lastReadTime: paper.lastReadTime,
+      sortOrder: paper.sortOrder
     }
     const predicates = new relationalStore.RdbPredicates('papers')
     predicates.equalTo('id', paper.id)
@@ -227,6 +231,10 @@ export class DatabaseHelper {
 
   async updateCitationCount(paperId: number, citationCount: number): Promise<boolean> {
     return await this.updatePaperFields(paperId, { citationCount: citationCount } as relationalStore.ValuesBucket)
+  }
+
+  async updateSortOrder(paperId: number, sortOrder: number): Promise<boolean> {
+    return await this.updatePaperFields(paperId, { sortOrder: sortOrder } as relationalStore.ValuesBucket)
   }
 
   async updateReadingProgress(paperId: number, lastReadPage: number, lastReadTime: number,
@@ -400,6 +408,10 @@ export class DatabaseHelper {
       const lastTimeIdx = resultSet.getColumnIndex('lastReadTime')
       if (lastTimeIdx >= 0) {
         paper.lastReadTime = resultSet.getLong(lastTimeIdx)
+      }
+      const sortOrderIdx = resultSet.getColumnIndex('sortOrder')
+      if (sortOrderIdx >= 0) {
+        paper.sortOrder = resultSet.getLong(sortOrderIdx)
       }
       papers.push(paper)
     } while (resultSet.goToNextRow())

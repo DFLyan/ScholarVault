@@ -12,7 +12,7 @@ import { webview } from '@kit.ArkWeb'
 import { common } from '@kit.AbilityKit'
 import { fileIo as fs } from '@kit.CoreFileKit'
 
-const SORT_LABELS: Array<string> = ['最新添加', '年份', '标题', '最近阅读', '评分']
+const SORT_LABELS: Array<string> = ['最新添加', '年份', '标题', '最近阅读', '评分', '自定义']
 const FILTER_LABELS: Array<string> = ['全部', '未读', '在读', '已读', '收藏']
 
 @Entry
@@ -31,6 +31,8 @@ struct MainPage {
   @State filterMode: number = 0
   @State searchingFulltext: boolean = false
   @State fulltextHits: Array<PdfSearchHit> = []
+  @State selectionMode: boolean = false
+  @State selectedIds: Array<number> = []
   private paperService: PaperService = new PaperService()
   private categoryService: CategoryService = new CategoryService()
   private webController: webview.WebviewController = new webview.WebviewController()
@@ -86,12 +88,19 @@ struct MainPage {
       sorted.sort((a: Paper, b: Paper): number => a.title.localeCompare(b.title))
     } else if (this.sortMode === 3) {
       sorted.sort((a: Paper, b: Paper): number => b.lastReadTime - a.lastReadTime)
+    } else if (this.sortMode === 5) {
+      sorted.sort((a: Paper, b: Paper): number => a.sortOrder - b.sortOrder)
     } else {
       sorted.sort((a: Paper, b: Paper): number => b.rating - a.rating)
     }
-    const pinned = sorted.filter((p: Paper): boolean => p.isPinned > 0)
-    const normal = sorted.filter((p: Paper): boolean => p.isPinned === 0)
-    this.papers = pinned.concat(normal)
+    if (this.sortMode === 5) {
+      // 自定义顺序下不做置顶浮动，保证拖拽位置稳定
+      this.papers = sorted
+    } else {
+      const pinned = sorted.filter((p: Paper): boolean => p.isPinned > 0)
+      const normal = sorted.filter((p: Paper): boolean => p.isPinned === 0)
+      this.papers = pinned.concat(normal)
+    }
   }
 
   private setupDownloadDelegate(): void {
@@ -231,24 +240,63 @@ struct MainPage {
   }
 
   build() {
-    Tabs({ barPosition: BarPosition.End, index: this.currentTab }) {
-      TabContent() {
-        this.LibraryTab()
-      }.tabBar('论文库')
+    Stack({ alignContent: Alignment.Bottom }) {
+      Tabs({ barPosition: BarPosition.End, index: this.currentTab }) {
+        TabContent() {
+          this.LibraryTab()
+        }
 
-      TabContent() {
-        this.CategoryTab()
-      }.tabBar('分类')
+        TabContent() {
+          this.CategoryTab()
+        }
 
-      TabContent() {
-        this.SearchTab()
-      }.tabBar('搜索')
+        TabContent() {
+          this.SearchTab()
+        }
+      }
+      .barHeight(0)
+      .onChange((index: number) => {
+        this.currentTab = index
+      })
+      .width('100%')
+      .height('100%')
+
+      this.DockBar()
     }
-    .onChange((index: number) => {
-      this.currentTab = index
-    })
     .width('100%')
     .height('100%')
+  }
+
+  @Builder
+  DockBar() {
+    Row({ space: 4 }) {
+      this.DockItem('📚', '论文库', 0)
+      this.DockItem('🗂️', '分类', 1)
+      this.DockItem('🌐', '搜索', 2)
+    }
+    .padding({ left: 6, right: 6, top: 6, bottom: 6 })
+    .backgroundColor('#99FFFFFF')
+    .backgroundBlurStyle(BlurStyle.Thick)
+    .borderRadius(28)
+    .shadow({ radius: 20, color: '#26000000', offsetX: 0, offsetY: 4 })
+    .margin({ left: 56, right: 56, bottom: 12 })
+  }
+
+  @Builder
+  DockItem(icon: string, label: string, index: number) {
+    Column({ space: 2 }) {
+      Text(icon)
+        .fontSize(20)
+      Text(label)
+        .fontSize(10)
+        .fontColor(this.currentTab === index ? '#4A90D9' : '#888888')
+    }
+    .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+    .borderRadius(20)
+    .backgroundColor(this.currentTab === index ? '#1A4A90D9' : Color.Transparent)
+    .onClick(() => {
+      this.currentTab = index
+    })
   }
 
   @Builder
@@ -260,22 +308,32 @@ struct MainPage {
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .layoutWeight(1)
-          Text('查重')
+          Text(this.selectionMode ? '取消' : '选择')
             .fontSize(14)
-            .fontColor('#4A90D9')
+            .fontColor(this.selectionMode ? '#D94444' : '#4A90D9')
             .onClick(() => {
-              this.goToDuplicates()
-            })
-          Text('统计')
-            .fontSize(14)
-            .fontColor('#4A90D9')
-            .margin({ left: 16 })
-            .onClick(() => {
-              this.goToStatistics()
+              this.toggleSelectionMode()
             })
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 12 })
+
+        Row({ space: 8 }) {
+          this.EntryChip('🔄 同步', (): void => {
+            this.goToSync()
+          })
+          this.EntryChip('🔍 查重', (): void => {
+            this.goToDuplicates()
+          })
+          this.EntryChip('📊 统计', (): void => {
+            this.goToStatistics()
+          })
+          this.EntryChip('📄 文档扫描', (): void => {
+            this.goToDocumentScan()
+          })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8 })
 
         SearchBar({
           onSearch: (query: string) => {
@@ -297,27 +355,35 @@ struct MainPage {
           .layoutWeight(1)
           .width('100%')
           .justifyContent(FlexAlign.Center)
-        } else {
+        } else if (this.selectionMode) {
           List({ space: 8 }) {
             ForEach(this.papers, (paper: Paper) => {
-              ListItem() {
-                PaperCard({
-                  paper: paper,
-                  onCardClick: (paperId: number) => {
-                    this.goToPaperDetail(paperId)
-                  },
-                  onToggleFavorite: (paperId: number) => {
-                    this.toggleFavorite(paperId)
-                  },
-                  onTogglePin: (paperId: number) => {
-                    this.togglePin(paperId)
-                  }
-                })
-              }
+              this.SelectablePaperListItem(paper)
             }, (paper: Paper) => `${paper.id}`)
           }
           .layoutWeight(1)
-          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .padding({ left: 16, right: 16, top: 8, bottom: 104 })
+        } else if (this.isDraggable()) {
+          List({ space: 8 }) {
+            ForEach(this.papers, (paper: Paper) => {
+              this.PaperListItem(paper)
+            }, (paper: Paper) => `${paper.id}`)
+              .onMove((from: number, to: number) => {
+                const moved = this.papers.splice(from, 1)
+                this.papers.splice(to, 0, moved[0])
+                this.persistSortOrder()
+              })
+          }
+          .layoutWeight(1)
+          .padding({ left: 16, right: 16, top: 8, bottom: 104 })
+        } else {
+          List({ space: 8 }) {
+            ForEach(this.papers, (paper: Paper) => {
+              this.PaperListItem(paper)
+            }, (paper: Paper) => `${paper.id}`)
+          }
+          .layoutWeight(1)
+          .padding({ left: 16, right: 16, top: 8, bottom: 104 })
         }
 
         if (this.searchingFulltext || this.fulltextHits.length > 0) {
@@ -328,22 +394,127 @@ struct MainPage {
       .height('100%')
       .backgroundColor('#F5F5F5')
 
-      // 右下角浮动按钮
-      Button('+')
-        .width(56)
-        .height(56)
-        .fontSize(24)
-        .fontColor(Color.White)
-        .backgroundColor('#4A90D9')
-        .borderRadius(28)
-        .align(Alignment.BottomEnd)
-        .offset({ x: -24, y: -24 })
-        .onClick(() => {
-          this.goToAddPaper()
-        })
+      // 右下角浮动按钮（避让底部 dock）
+      if (!this.selectionMode) {
+        Button('+')
+          .width(56)
+          .height(56)
+          .fontSize(24)
+          .fontColor(Color.White)
+          .backgroundColor('#4A90D9')
+          .borderRadius(28)
+          .align(Alignment.BottomEnd)
+          .offset({ x: -24, y: -104 })
+          .onClick(() => {
+            this.goToAddPaper()
+          })
+      }
+
+      // 批量操作栏
+      if (this.selectionMode) {
+        Row({ space: 12 }) {
+          Text(`已选 ${this.selectedIds.length} 篇`)
+            .fontSize(13)
+            .fontColor('#333333')
+            .layoutWeight(1)
+          Text(this.selectedIds.length === this.papers.length && this.papers.length > 0 ? '取消全选' : '全选')
+            .fontSize(14)
+            .fontColor('#4A90D9')
+            .onClick(() => {
+              this.toggleAllSelection()
+            })
+          Button('删除')
+            .fontSize(14)
+            .backgroundColor('#D94444')
+            .fontColor(Color.White)
+            .borderRadius(8)
+            .enabled(this.selectedIds.length > 0)
+            .onClick(() => {
+              this.confirmDeleteSelected()
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+        .backgroundColor(Color.White)
+        .borderRadius(16)
+        .shadow({ radius: 12, color: '#1F000000', offsetY: -2 })
+        .margin({ left: 16, right: 16, bottom: 96 })
+        .align(Alignment.Bottom)
+      }
     }
     .width('100%')
     .height('100%')
+  }
+
+  @Builder
+  EntryChip(label: string, onTap: () => void) {
+    Text(label)
+      .fontSize(12)
+      .fontColor('#4A90D9')
+      .backgroundColor('#E8F0FE')
+      .borderRadius(10)
+      .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+      .onClick(() => {
+        onTap()
+      })
+  }
+
+  @Builder
+  PaperListItem(paper: Paper) {
+    ListItem() {
+      PaperCard({
+        paper: paper,
+        onCardClick: (paperId: number) => {
+          this.goToPaperDetail(paperId)
+        },
+        onToggleFavorite: (paperId: number) => {
+          this.toggleFavorite(paperId)
+        },
+        onTogglePin: (paperId: number) => {
+          this.togglePin(paperId)
+        }
+      })
+    }
+    .swipeAction({ end: (): void => {
+      this.SwipeDeleteBuilder(paper.id)
+    } })
+  }
+
+  @Builder
+  SelectablePaperListItem(paper: Paper) {
+    ListItem() {
+      PaperCard({
+        paper: paper,
+        selectable: true,
+        selected: this.selectedIds.indexOf(paper.id) >= 0,
+        onCardClick: (paperId: number) => {
+          this.toggleSelected(paperId)
+        },
+        onToggleFavorite: (paperId: number) => {
+          this.toggleFavorite(paperId)
+        },
+        onTogglePin: (paperId: number) => {
+          this.togglePin(paperId)
+        }
+      })
+    }
+  }
+
+  @Builder
+  SwipeDeleteBuilder(paperId: number) {
+    Button('删除')
+      .fontSize(13)
+      .backgroundColor('#D94444')
+      .fontColor(Color.White)
+      .borderRadius(8)
+      .height(56)
+      .margin({ left: 8 })
+      .onClick(() => {
+        const paper = this.papers.find((p: Paper): boolean => p.id === paperId)
+        if (paper !== undefined) {
+          this.confirmSwipeDelete(paper)
+        }
+      })
   }
 
   @Builder
@@ -449,7 +620,7 @@ struct MainPage {
       }, (hit: PdfSearchHit) => `${hit.paperId}_${hit.pageIndex}_${hit.context.length}`)
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 8, bottom: 72 })
+    .padding({ left: 16, right: 16, top: 8, bottom: 104 })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -551,24 +722,11 @@ struct MainPage {
 
         List({ space: 8 }) {
           ForEach(this.papers, (paper: Paper) => {
-            ListItem() {
-              PaperCard({
-                paper: paper,
-                onCardClick: (paperId: number) => {
-                  this.goToPaperDetail(paperId)
-                },
-                onToggleFavorite: (paperId: number) => {
-                  this.toggleFavorite(paperId)
-                },
-                onTogglePin: (paperId: number) => {
-                  this.togglePin(paperId)
-                }
-              })
-            }
+            this.PaperListItem(paper)
           }, (paper: Paper) => `${paper.id}`)
         }
         .layoutWeight(1)
-        .padding({ left: 16, right: 16 })
+        .padding({ left: 16, right: 16, bottom: 104 })
       }
     }
     .width('100%')
@@ -691,6 +849,7 @@ struct MainPage {
       .width('100%')
       .justifyContent(FlexAlign.Center)
       .padding(8)
+      .margin({ bottom: 84 })
       .backgroundColor(Color.White)
     }
     .width('100%')
@@ -710,6 +869,104 @@ struct MainPage {
         this.urlInput = url
         this.loadUrl()
       })
+  }
+
+  private isDraggable(): boolean {
+    return this.sortMode === 5 && this.filterMode === 0 &&
+      this.searchText.length === 0 && !this.selectionMode
+  }
+
+  private toggleSelectionMode(): void {
+    this.selectionMode = !this.selectionMode
+    if (!this.selectionMode) {
+      this.selectedIds = []
+    }
+  }
+
+  private toggleSelected(paperId: number): void {
+    const index = this.selectedIds.indexOf(paperId)
+    if (index >= 0) {
+      this.selectedIds.splice(index, 1)
+    } else {
+      this.selectedIds.push(paperId)
+    }
+  }
+
+  private toggleAllSelection(): void {
+    if (this.selectedIds.length === this.papers.length) {
+      this.selectedIds = []
+    } else {
+      const ids: Array<number> = []
+      for (let i = 0; i < this.papers.length; i++) {
+        ids.push(this.papers[i].id)
+      }
+      this.selectedIds = ids
+    }
+  }
+
+  private confirmDeleteSelected(): void {
+    if (this.selectedIds.length === 0) {
+      return
+    }
+    this.getUIContext().showAlertDialog({
+      title: '批量删除',
+      message: `确定删除选中的 ${this.selectedIds.length} 篇论文吗？此操作不可撤销。`,
+      primaryButton: {
+        value: '删除',
+        action: () => {
+          this.deleteSelected()
+        }
+      },
+      secondaryButton: {
+        value: '取消',
+        action: () => {}
+      }
+    })
+  }
+
+  private async deleteSelected(): Promise<void> {
+    const ids = this.selectedIds.slice()
+    for (let i = 0; i < ids.length; i++) {
+      await this.paperService.deletePaper(ids[i])
+    }
+    this.selectedIds = []
+    this.selectionMode = false
+    await this.loadData()
+    this.getUIContext().getPromptAction().showToast({ message: `已删除 ${ids.length} 篇论文` })
+  }
+
+  private confirmSwipeDelete(paper: Paper): void {
+    this.getUIContext().showAlertDialog({
+      title: '确认删除',
+      message: `确定要删除「${paper.title}」吗？此操作不可撤销。`,
+      primaryButton: {
+        value: '删除',
+        action: () => {
+          this.deletePaperDirect(paper.id)
+        }
+      },
+      secondaryButton: {
+        value: '取消',
+        action: () => {}
+      }
+    })
+  }
+
+  private async deletePaperDirect(paperId: number): Promise<void> {
+    await this.paperService.deletePaper(paperId)
+    await this.loadData()
+    this.getUIContext().getPromptAction().showToast({ message: '论文已删除' })
+  }
+
+  private async persistSortOrder(): Promise<void> {
+    for (let i = 0; i < this.papers.length; i++) {
+      const paper = this.papers[i]
+      if (paper.sortOrder !== i) {
+        paper.sortOrder = i
+        await this.paperService.updateSortOrder(paper.id, i)
+      }
+    }
+    this.applyFilters()
   }
 
   private async onSearch(query: string): Promise<void> {
@@ -801,6 +1058,14 @@ struct MainPage {
 
   private goToStatistics(): void {
     this.getUIContext().getRouter().pushUrl({ url: 'pages/StatisticsPage' })
+  }
+
+  private goToSync(): void {
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/SyncSettingsPage' })
+  }
+
+  private goToDocumentScan(): void {
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/DocumentScanPage' })
   }
 
   private loadUrl(): void {

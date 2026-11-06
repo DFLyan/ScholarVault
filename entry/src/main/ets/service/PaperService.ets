@@ -54,7 +54,11 @@ export class PaperService {
   }
 
   async updateCitationCount(paperId: number, citationCount: number): Promise<boolean> {
-    return await this.db.updateCitationCount(paperId, citationCount)
+    return this.db.updateCitationCount(paperId, citationCount)
+  }
+
+  async updateSortOrder(paperId: number, sortOrder: number): Promise<boolean> {
+    return this.db.updateSortOrder(paperId, sortOrder)
   }
 
   async updateReadingProgress(paperId: number, lastReadPage: number, lastReadTime: number,

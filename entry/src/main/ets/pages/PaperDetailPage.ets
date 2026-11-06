@@ -30,6 +30,9 @@ struct PaperDetailPage {
   @State fetchingCitations: boolean = false
   @State fetchingRelated: boolean = false
   @State relatedPapers: Array<RelatedPaper> = []
+  @State candidates: Array<RelatedPaper> = []
+  @State showCandidates: boolean = false
+  @State fetchingCandidates: boolean = false
   private paperService: PaperService = new PaperService()
   private paperId: number = 0
 
@@ -104,6 +107,98 @@ struct PaperDetailPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#F5F5F5')
+    .bindSheet($$this.showCandidates, this.CandidatesSheetBuilder(), {
+      height: SheetSize.MEDIUM,
+      dragBar: true,
+      backgroundColor: Color.White,
+      onDisappear: () => {
+        this.showCandidates = false
+      }
+    })
+  }
+
+  @Builder
+  CandidatesSheetBuilder() {
+    Column({ space: 12 }) {
+      Text('选择匹配的论文')
+        .fontSize(17)
+        .fontWeight(FontWeight.Bold)
+      Text('点击搜索结果更新引用数并补全缺失信息（数据源：Semantic Scholar，Google Scholar 无公开 API）')
+        .fontSize(12)
+        .fontColor('#999999')
+        .lineHeight(17)
+
+      if (this.fetchingCandidates) {
+        Column({ space: 8 }) {
+          LoadingProgress()
+            .width(32)
+            .height(32)
+          Text('正在搜索...')
+            .fontSize(13)
+            .fontColor('#999999')
+        }
+        .width('100%')
+        .margin({ top: 24 })
+      } else {
+        Scroll() {
+          Column({ space: 8 }) {
+            ForEach(this.candidates, (candidate: RelatedPaper) => {
+              Column({ space: 4 }) {
+                Text(candidate.title)
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .width('100%')
+                Row({ space: 8 }) {
+                  if (candidate.year > 0) {
+                    Text(`${candidate.year}`)
+                      .fontSize(12)
+                      .fontColor('#888888')
+                  }
+                  if (candidate.venue.length > 0) {
+                    Text(candidate.venue)
+                      .fontSize(12)
+                      .fontColor('#888888')
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .layoutWeight(1)
+                  }
+                  if (candidate.citationCount >= 0) {
+                    Text(`被引 ${candidate.citationCount}`)
+                      .fontSize(12)
+                      .fontColor('#4A90D9')
+                  }
+                }
+                .width('100%')
+              }
+              .width('100%')
+              .padding(10)
+              .backgroundColor('#F8F8F8')
+              .borderRadius(8)
+              .onClick(() => {
+                this.confirmApplyCandidate(candidate)
+              })
+            }, (candidate: RelatedPaper) => `${candidate.title}_${candidate.citationCount}`)
+
+            Button('取消')
+              .fontSize(14)
+              .backgroundColor(Color.White)
+              .fontColor('#666666')
+              .borderRadius(8)
+              .width('100%')
+              .margin({ top: 4 })
+              .onClick(() => {
+                this.showCandidates = false
+              })
+          }
+          .width('100%')
+        }
+        .layoutWeight(1)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding(16)
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -257,17 +352,20 @@ struct PaperDetailPage {
         }
 
         Row({ space: 4 }) {
-          Text(this.fetchingCitations ? '引用数查询中...' :
-            (this.paper.citationCount >= 0 ? `被引 ${this.paper.citationCount} 次` : '获取引用数'))
+          Text(this.paper.citationCount >= 0 ? `被引 ${this.paper.citationCount} 次` : '获取引用数')
             .fontSize(14)
             .fontColor(this.paper.citationCount >= 0 ? '#666666' : '#4A90D9')
-          if (this.paper.citationCount < 0 && !this.fetchingCitations) {
+          if (!this.fetchingCandidates) {
             Text('⟳')
-              .fontSize(15)
+              .fontSize(16)
               .fontColor('#4A90D9')
               .onClick(() => {
-                this.fetchCitationCount()
+                this.openCandidateSheet()
               })
+          } else {
+            LoadingProgress()
+              .width(16)
+              .height(16)
           }
         }
       }
@@ -637,6 +735,61 @@ struct PaperDetailPage {
     } else {
       this.getUIContext().getPromptAction().showToast({ message: '获取引用数失败，请检查网络' })
     }
+  }
+
+  private async openCandidateSheet(): Promise<void> {
+    if (this.fetchingCandidates) {
+      return
+    }
+    this.fetchingCandidates = true
+    this.candidates = await ScholarService.fetchPaperCandidates(this.paper.title, 8)
+    this.fetchingCandidates = false
+    if (this.candidates.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '未搜索到匹配结果，请稍后重试' })
+      return
+    }
+    this.showCandidates = true
+  }
+
+  private confirmApplyCandidate(candidate: RelatedPaper): void {
+    this.getUIContext().showAlertDialog({
+      title: '确认更新',
+      message: `使用「${candidate.title}」更新本论文的引用数${this.paper.doi.length === 0 && candidate.doi.length > 0 ? '并补全 DOI' : ''}？`,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '确认更新',
+        fontColor: '#4A90D9',
+        action: () => {
+          this.applyCandidate(candidate)
+        }
+      }
+    })
+  }
+
+  private async applyCandidate(candidate: RelatedPaper): Promise<void> {
+    if (candidate.citationCount >= 0) {
+      this.paper.citationCount = candidate.citationCount
+      await this.paperService.updateCitationCount(this.paperId, candidate.citationCount)
+    }
+    if (this.paper.doi.length === 0 && candidate.doi.length > 0) {
+      this.paper.doi = candidate.doi
+    }
+    if (this.paper.year <= 0 && candidate.year > 0) {
+      this.paper.year = candidate.year
+    }
+    if (this.paper.journal.length === 0 && candidate.venue.length > 0) {
+      this.paper.journal = candidate.venue
+    }
+    this.paper.dateModified = Date.now()
+    await this.paperService.updatePaper(this.paper)
+    this.updateCitation()
+    this.showCandidates = false
+    this.getUIContext().getPromptAction().showToast({ message: '论文信息已更新' })
   }
 
   private async fetchRelatedPapers(): Promise<void> {

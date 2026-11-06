@@ -60,6 +60,62 @@ export class ScholarService {
     }
   }
 
+  static async fetchPaperCandidates(title: string, limit: number): Promise<Array<RelatedPaper>> {
+    const query = encodeURIComponent(title)
+    const url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${query}` +
+      `&fields=title,year,venue,citationCount,externalIds&limit=${limit}`
+    try {
+      const request = http.createHttp()
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/json' },
+        connectTimeout: 15000,
+        readTimeout: 15000
+      })
+      request.destroy()
+      if (response.responseCode === 200 && typeof response.result === 'string') {
+        return ScholarService.parseSearchResults(response.result)
+      }
+      hilog.error(DOMAIN, TAG, `Semantic Scholar search failed: ${response.responseCode}`)
+      return []
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Semantic Scholar search error: ${(e as Error).message}`)
+      return []
+    }
+  }
+
+  private static parseSearchResults(jsonStr: string): Array<RelatedPaper> {
+    const results: Array<RelatedPaper> = []
+    try {
+      const obj = JSON.parse(jsonStr) as Record<string, Object>
+      const dataArr = obj['data'] as Array<Record<string, Object>>
+      if (dataArr === undefined) {
+        return results
+      }
+      for (let i = 0; i < dataArr.length; i++) {
+        const item = dataArr[i]
+        const related = new RelatedPaper()
+        related.title = (item['title'] as string) ?? ''
+        const yearVal = item['year'] as number
+        related.year = yearVal ?? 0
+        related.venue = (item['venue'] as string) ?? ''
+        const citeVal = item['citationCount'] as number
+        related.citationCount = citeVal ?? -1
+        const extIds = item['externalIds'] as Record<string, string>
+        if (extIds !== undefined) {
+          related.doi = extIds['DOI'] ?? ''
+        }
+        if (related.title.length > 0) {
+          results.push(related)
+        }
+      }
+      return results
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Parse search results failed: ${(e as Error).message}`)
+      return results
+    }
+  }
+
   private static parseRecommendations(jsonStr: string): Array<RelatedPaper> {
     const results: Array<RelatedPaper> = []
     try {

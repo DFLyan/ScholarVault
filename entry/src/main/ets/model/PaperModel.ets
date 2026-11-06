@@ -48,6 +48,7 @@ export class Paper {
   citationCount: number = -1
   lastReadPage: number = 0
   lastReadTime: number = 0
+  sortOrder: number = 0
 
   static create(title: string, authors: string, year: number, journal: string, doi: string,
     arxivId: string, abstractVal: string, keywords: string, pdfPath: string): Paper {
