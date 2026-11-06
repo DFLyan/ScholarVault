@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "ScholarVault - 文献管理工具"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "ScholarVault 文献管理"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "ScholarVault"
+    }
+  ]
+}

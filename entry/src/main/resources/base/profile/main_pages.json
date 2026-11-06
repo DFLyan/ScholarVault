@@ -1,0 +1,12 @@
+{
+  "src": [
+    "pages/MainPage",
+    "pages/AddPaperPage",
+    "pages/PaperDetailPage",
+    "pages/PdfReaderPage",
+    "pages/CategoryManagePage",
+    "pages/CitationExportPage",
+    "pages/StatisticsPage",
+    "pages/DuplicatesPage"
+  ]
+}

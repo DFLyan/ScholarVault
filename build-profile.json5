@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\DFLya\\.ohos\\config\\default_ScholarVault_m0sROC_FDUJD7oClkYqnfNNPLZzje3zDVj6SQvx0b9Y=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001A3022C3764466D923DE9036C5F239C6540527B7FCC54CBF980E60D8923E53D89C079F513294AB",
+          "profile": "C:\\Users\\DFLya\\.ohos\\config\\default_ScholarVault_m0sROC_FDUJD7oClkYqnfNNPLZzje3zDVj6SQvx0b9Y=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\DFLya\\.ohos\\config\\default_ScholarVault_m0sROC_FDUJD7oClkYqnfNNPLZzje3zDVj6SQvx0b9Y=.p12",
+          "storePassword": "0000001A8DD54A53971D350D5E072544119D81E2B0CC08F4D287967A963CBD4D2F612798F0CBCA13A351"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "26.0.0",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
