@@ -9,6 +9,7 @@ import { PaperCard } from '../components/PaperCard'
 import { TagChip } from '../components/TagChip'
 import { SearchBar } from '../components/SearchBar'
 import { EmptyState } from '../components/EmptyState'
+import { PersonalPanel } from '../components/PersonalPanel'
 import { PaperDetailParams, PdfReaderParams } from '../model/RouteParams'
 import { webview } from '@kit.ArkWeb'
 
@@ -121,6 +122,10 @@ struct MainPage {
         TabContent() {
           this.SearchTab()
         }
+
+        TabContent() {
+          PersonalPanel()
+        }
       }
       .barHeight(0)
       .onChange((index: number) => {
@@ -141,6 +146,7 @@ struct MainPage {
       this.DockItem('📚', '论文库', 0)
       this.DockItem('🗂️', '分类', 1)
       this.DockItem('🌐', '搜索', 2)
+      this.DockItem('👤', '我的', 3)
     }
     .padding({ left: 6, right: 6, top: 6, bottom: 6 })
     .backgroundColor('#99FFFFFF')

@@ -126,6 +126,36 @@ export class DatabaseHelper {
     return this.store
   }
 
+  // 备份数据库到同目录下指定文件（用于云空间备份）
+  async backupDatabase(destName: string): Promise<boolean> {
+    if (this.store === undefined) {
+      return false
+    }
+    try {
+      await this.store.backup(destName)
+      hilog.info(DOMAIN, TAG, `Database backed up to ${destName}`)
+      return true
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Database backup failed: ${(e as Error).message}`)
+      return false
+    }
+  }
+
+  // 从同目录下的备份文件恢复数据库（用于云空间恢复）
+  async restoreDatabase(srcName: string): Promise<boolean> {
+    if (this.store === undefined) {
+      return false
+    }
+    try {
+      await this.store.restore(srcName)
+      hilog.info(DOMAIN, TAG, `Database restored from ${srcName}`)
+      return true
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Database restore failed: ${(e as Error).message}`)
+      return false
+    }
+  }
+
   async insertPaper(paper: Paper): Promise<number> {
     if (this.store === undefined) {
       return -1

@@ -30,6 +30,11 @@
 - 详情页"GS 引用"：自动请求 Google Scholar 标题搜索页并解析被引数（同 Zotero GS 插件做法），选择候选即更新引用数/年份/来源；被限流或触发人机验证时降级为网页版手动核对
 - DOI / arXiv ID 可点击跳转原文页（doi.org / arxiv.org）
 
+### 个人页面（dock「我的」）
+- 华为账号登录：Account Kit 授权获取 UnionID / 昵称，登录态本地持久化，支持退出（同时撤销授权）
+- 华为空间同步：登录后可将论文库数据库一键备份到华为云空间（AGC Cloud Storage），换机/重装后可从云端恢复最近备份；云端自动保留最近 5 份
+- Zotero 等其他账户同步面板集成在个人页（ZoteroSyncPanel 复用，账户同步页保留）
+
 ### 账户同步
 - Zotero 同步：配置用户 ID 与 API Key，拉取云端文献库自动入库（DOI / 标题去重）
 - Mendeley / EndNote 暂无公开 API，可通过导出 .ris 文件在添加页导入
@@ -57,8 +62,18 @@
 - **数据库**：关系型数据库（@ohos.data.relationalStore），支持 schema 版本迁移
 - **PDF**：@kit.OfficeService PDFKit（PdfView + pdfService）
 - **网络**：@ohos.net.http（CrossRef / arXiv / OpenAlex / Semantic Scholar / Zotero，均为免费公开 API）
+- **账号/云**：Account Kit（华为账号登录）、CloudFoundationKit cloudStorage（华为云空间备份/恢复）
 - **状态管理**：V1 状态装饰器（@State / @Link / @Prop）
 - **页面路由**：@ohos.router
+
+## 华为云服务配置（AGC）
+
+华为账号登录与云空间备份依赖 AppGallery Connect，需完成以下配置后方可使用：
+
+1. 在 [AGC](https://developer.huawei.com/consumer/cn/service/josp/agc/index.html) 创建项目并添加本应用（包名 `com.your.bundle`，以实际签名配置为准）。
+2. **华为账号登录**：开通「华为账号服务」，在 AGC「项目设置 → 常规 → 应用」获取 Client ID，替换 `entry/src/main/module.json5` 中 `client_id` 的占位值 `YOUR_AGC_CLIENT_ID`；同时在 AGC 配置当前签名证书的公钥指纹（指纹校验失败会报 1001500001）。
+3. **云空间备份**：开通「云空间/云存储」服务并创建存储实例；未开通时应用会提示对应错误码（1008220009 / 1008221001），不影响其他功能。
+4. 使用调试证书签名时，更换证书后需重新配置指纹。
 
 ## 环境要求
 
@@ -82,11 +97,11 @@ hvigorw assembleHap
 
 ```
 entry/src/main/ets/
-├── components/          # 通用组件（PaperCard、SearchBar、TagChip、EmptyState）
+├── components/          # 通用组件（PaperCard、SearchBar、TagChip、EmptyState、PersonalPanel、ZoteroSyncPanel）
 ├── db/                  # 数据库层（DatabaseHelper：建表、迁移、CRUD、统计查询）
 ├── model/               # 数据模型（Paper、Category、PaperNote、ReaderNote、RouteParams 等）
 ├── pages/               # 页面
-│   ├── MainPage         # 主页：论文库 / 分类 / 浏览器三个 Tab（浮动 dock、多选、拖拽排序、BibTeX 批量导出）
+│   ├── MainPage         # 主页：论文库 / 分类 / 浏览器 / 我的 四个 Tab（浮动 dock、多选、拖拽排序、BibTeX 批量导出）
 │   ├── AddPaperPage     # 添加论文：DOI/arXiv、手动输入、文件导入
 │   ├── PaperDetailPage  # 论文详情：状态/评分/笔记/引用/推荐/引用刷新/GS 搜索/分类编辑
 │   ├── PdfReaderPage    # PDF 阅读器：标注/批注/搜索/进度
@@ -107,6 +122,8 @@ entry/src/main/ets/
 │   ├── DuplicateService # 重复检测
 │   ├── ScholarService   # 多源引用数（OpenAlex / CrossRef / Semantic Scholar / Google Scholar）+ 相关文献推荐
 │   ├── SyncService      # Zotero 同步（配置存储 + 拉取解析）
+│   ├── HuaweiAccountService # 华为账号登录（Account Kit 授权 + 登录态持久化）
+│   ├── CloudBackupService   # 华为云空间备份/恢复（RDB 备份 + cloudStorage 上传下载）
 │   ├── DocumentScanService # 文档扫描（文本提取 + 标题匹配）
 │   ├── WebDownloadService # 浏览器下载委托（下载/入库/重试，多页面复用）
 │   └── CategoryService  # 分类业务

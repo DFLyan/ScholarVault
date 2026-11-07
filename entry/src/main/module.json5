@@ -15,6 +15,12 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    "metadata": [
+      {
+        "name": "client_id",
+        "value": "YOUR_AGC_CLIENT_ID"
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",
