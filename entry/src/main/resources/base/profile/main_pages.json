@@ -9,6 +9,7 @@
     "pages/StatisticsPage",
     "pages/DuplicatesPage",
     "pages/SyncSettingsPage",
-    "pages/DocumentScanPage"
+    "pages/DocumentScanPage",
+    "pages/WebViewerPage"
   ]
 }

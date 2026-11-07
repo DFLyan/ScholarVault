@@ -3,14 +3,14 @@ import { Category } from '../model/CategoryModel'
 import { PaperService } from '../service/PaperService'
 import { CategoryService } from '../service/CategoryService'
 import { FullTextSearchService, PdfSearchHit } from '../service/FullTextSearchService'
+import { LatexLibraryService } from '../service/LatexLibraryService'
+import { WebDownloadService } from '../service/WebDownloadService'
 import { PaperCard } from '../components/PaperCard'
 import { TagChip } from '../components/TagChip'
 import { SearchBar } from '../components/SearchBar'
 import { EmptyState } from '../components/EmptyState'
 import { PaperDetailParams, PdfReaderParams } from '../model/RouteParams'
 import { webview } from '@kit.ArkWeb'
-import { common } from '@kit.AbilityKit'
-import { fileIo as fs } from '@kit.CoreFileKit'
 
 const SORT_LABELS: Array<string> = ['最新添加', '年份', '标题', '最近阅读', '评分', '自定义']
 const FILTER_LABELS: Array<string> = ['全部', '未读', '在读', '已读', '收藏']
@@ -36,19 +36,21 @@ struct MainPage {
   private paperService: PaperService = new PaperService()
   private categoryService: CategoryService = new CategoryService()
   private webController: webview.WebviewController = new webview.WebviewController()
-  private downloadDelegate: webview.WebDownloadDelegate = new webview.WebDownloadDelegate()
-  private downloadDelegateSet: boolean = false
-  private abilityContext: common.Context | undefined = undefined
-  private downloadTargets: Map<string, string> = new Map<string, string>()
+  private downloadService: WebDownloadService | undefined = undefined
 
   constructor() {
     super()
   }
 
   async aboutToAppear(): Promise<void> {
-    // 预捕获应用上下文，供下载回调使用（回调内无法可靠调用 getContext()）
-    this.abilityContext = this.getUIContext().getHostContext()
-    this.setupDownloadDelegate()
+    // 下载委托提取到 WebDownloadService，页面仅负责刷新数据与提示
+    const context = this.getUIContext().getHostContext()
+    if (context !== undefined) {
+      this.downloadService = new WebDownloadService(context, () => {
+        this.getUIContext().getPromptAction().showToast({ message: 'PDF 已下载并加入论文库' })
+        this.loadData()
+      })
+    }
   }
 
   onPageShow(): void {
@@ -57,7 +59,9 @@ struct MainPage {
   }
 
   aboutToDisappear(): void {
-    this.downloadTargets.clear()
+    if (this.downloadService !== undefined) {
+      this.downloadService.destroy()
+    }
   }
 
   async loadData(): Promise<void> {
@@ -100,142 +104,6 @@ struct MainPage {
       const pinned = sorted.filter((p: Paper): boolean => p.isPinned > 0)
       const normal = sorted.filter((p: Paper): boolean => p.isPinned === 0)
       this.papers = pinned.concat(normal)
-    }
-  }
-
-  private setupDownloadDelegate(): void {
-    this.downloadDelegate.onBeforeDownload((item: webview.WebDownloadItem) => {
-      console.log('Download triggered:', item.getUrl())
-      const context = this.abilityContext
-      if (context === undefined) {
-        console.error('Ability context is not available, cannot start download')
-        return
-      }
-
-      // 下载到 filesDir/papers（持久目录，cacheDir 可能被系统清理）
-      const papersDir = `${context.filesDir}/papers`
-      if (!fs.accessSync(papersDir)) {
-        fs.mkdirSync(papersDir, true)
-      }
-
-      let fileName = item.getSuggestedFileName()
-      if (fileName.trim().length === 0) {
-        fileName = this.extractFileNameFromUrl(item.getUrl())
-      }
-      if (fileName.length === 0) {
-        fileName = `download_${Date.now()}.pdf`
-      }
-      // 防路径穿越，并加时间戳前缀避免重名覆盖
-      fileName = fileName.replace(/[/\\]/g, '_')
-      const filePath = `${papersDir}/${Date.now()}_${fileName}`
-
-      try {
-        item.start(filePath)
-        this.downloadTargets.set(item.getGuid(), filePath)
-        console.log('Download started to:', filePath)
-      } catch (startError) {
-        console.error('Failed to start download:', startError)
-      }
-    })
-
-    this.downloadDelegate.onDownloadFinish((item: webview.WebDownloadItem) => {
-      const guid = item.getGuid()
-      const filePath = this.downloadTargets.get(guid)
-      this.downloadTargets.delete(guid)
-      if (filePath === undefined) {
-        return
-      }
-      if (!filePath.toLowerCase().endsWith('.pdf')) {
-        console.log('Download finished (not a PDF, skip import):', filePath)
-        return
-      }
-      console.log('Download finished, importing PDF into library:', filePath)
-      this.importDownloadedPaper(filePath)
-    })
-
-    this.downloadDelegate.onDownloadFailed((item: webview.WebDownloadItem) => {
-      this.downloadTargets.delete(item.getGuid())
-      console.error('Download failed, guid:', item.getGuid())
-    })
-  }
-
-  private extractFileNameFromUrl(url: string): string {
-    const pathStart = url.lastIndexOf('/')
-    if (pathStart === -1) {
-      return ''
-    }
-    let name = url.substring(pathStart + 1)
-    const queryIndex = name.indexOf('?')
-    if (queryIndex !== -1) {
-      name = name.substring(0, queryIndex)
-    }
-    return name
-  }
-
-  private async importDownloadedPaper(filePath: string): Promise<void> {
-    const slashIndex = filePath.lastIndexOf('/')
-    const fullFileName = slashIndex >= 0 ? filePath.substring(slashIndex + 1) : filePath
-    const dotIndex = fullFileName.lastIndexOf('.')
-    const baseName = dotIndex > 0 ? fullFileName.substring(0, dotIndex) : fullFileName
-    // 去掉时间戳前缀（第一个下划线前）并用空格还原文件名
-    const noPrefix = baseName.indexOf('_') >= 0 ? baseName.substring(baseName.indexOf('_') + 1) : baseName
-    const title = noPrefix.replace(/_/g, ' ').trim()
-    const paper = Paper.create(
-      title.length > 0 ? title : fullFileName,
-      '[]',
-      0,
-      '',
-      '',
-      '',
-      '',
-      '[]',
-      filePath
-    )
-    const paperId = await this.paperService.addPaper(paper)
-    if (paperId > 0) {
-      this.getUIContext().getPromptAction().showToast({ message: 'PDF 已下载并加入论文库' })
-      this.loadData()
-    } else {
-      console.error('Failed to insert downloaded paper into library:', filePath)
-    }
-  }
-
-  private retrySetDownloadDelegate(attempt: number): void {
-    const maxAttempts = 10  // 最多尝试10次
-    const retryDelay = 500  // 每次重试延迟500ms
-
-    if (this.downloadDelegateSet) {
-      console.log('Download delegate already set, stopping retry')
-      return
-    }
-
-    if (attempt >= maxAttempts) {
-      console.log('Max retry attempts reached, giving up on setting download delegate')
-      return
-    }
-
-    console.log(`Attempt ${attempt + 1} to set download delegate...`)
-
-    try {
-      // 检查Web控制器是否已初始化
-      if (this.webController) {
-        // 尝试设置下载委托
-        this.webController.setDownloadDelegate(this.downloadDelegate)
-        this.downloadDelegateSet = true
-        console.log(`Download delegate successfully set on attempt ${attempt + 1}`)
-      } else {
-        console.log(`Web controller not ready on attempt ${attempt + 1}, retrying in ${retryDelay}ms...`)
-        // 继续重试
-        setTimeout(() => {
-          this.retrySetDownloadDelegate(attempt + 1)
-        }, retryDelay)
-      }
-    } catch (error) {
-      console.error(`Failed to set download delegate on attempt ${attempt + 1}:`, error)
-      // 继续重试
-      setTimeout(() => {
-        this.retrySetDownloadDelegate(attempt + 1)
-      }, retryDelay)
     }
   }
 
@@ -301,7 +169,7 @@ struct MainPage {
 
   @Builder
   LibraryTab() {
-    Stack() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
       Column() {
         Row() {
           Text('论文库')
@@ -330,6 +198,9 @@ struct MainPage {
           })
           this.EntryChip('📄 文档扫描', (): void => {
             this.goToDocumentScan()
+          })
+          this.EntryChip('📑 BibTeX库', (): void => {
+            this.goToCitationExport()
           })
         }
         .width('100%')
@@ -362,7 +233,7 @@ struct MainPage {
             }, (paper: Paper) => `${paper.id}`)
           }
           .layoutWeight(1)
-          .padding({ left: 16, right: 16, top: 8, bottom: 104 })
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
         } else if (this.isDraggable()) {
           List({ space: 8 }) {
             ForEach(this.papers, (paper: Paper) => {
@@ -375,7 +246,7 @@ struct MainPage {
               })
           }
           .layoutWeight(1)
-          .padding({ left: 16, right: 16, top: 8, bottom: 104 })
+          .padding({ left: 16, right: 16, top: 8, bottom: 120 })
         } else {
           List({ space: 8 }) {
             ForEach(this.papers, (paper: Paper) => {
@@ -383,18 +254,54 @@ struct MainPage {
             }, (paper: Paper) => `${paper.id}`)
           }
           .layoutWeight(1)
-          .padding({ left: 16, right: 16, top: 8, bottom: 104 })
+          .padding({ left: 16, right: 16, top: 8, bottom: 120 })
         }
 
         if (this.searchingFulltext || this.fulltextHits.length > 0) {
           this.FulltextHitsSection()
+        }
+
+        // 批量操作栏（选择模式下显示在列表底部，含 BibTeX 导出）
+        if (this.selectionMode) {
+          Row({ space: 10 }) {
+            Text(`已选 ${this.selectedIds.length} 篇`)
+              .fontSize(13)
+              .fontColor('#333333')
+            Text(this.selectedIds.length === this.papers.length && this.papers.length > 0 ? '取消全选' : '全选')
+              .fontSize(14)
+              .fontColor('#4A90D9')
+              .onClick(() => {
+                this.toggleAllSelection()
+              })
+            Text('BibTeX')
+              .fontSize(13)
+              .fontColor('#44B949')
+              .onClick(() => {
+                this.exportSelectedToLatex()
+              })
+            Button('删除')
+              .fontSize(14)
+              .backgroundColor('#D94444')
+              .fontColor(Color.White)
+              .borderRadius(8)
+              .enabled(this.selectedIds.length > 0)
+              .onClick(() => {
+                this.confirmDeleteSelected()
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+          .backgroundColor(Color.White)
+          .borderRadius(16)
+          .shadow({ radius: 12, color: '#1F000000', offsetY: -2 })
+          .margin({ left: 16, right: 16, top: 4, bottom: 4 })
         }
       }
       .width('100%')
       .height('100%')
       .backgroundColor('#F5F5F5')
 
-      // 右下角浮动按钮（避让底部 dock）
+      // 右下角浮动按钮（Stack alignContent 定位，避让底部 dock）
       if (!this.selectionMode) {
         Button('+')
           .width(56)
@@ -403,43 +310,10 @@ struct MainPage {
           .fontColor(Color.White)
           .backgroundColor('#4A90D9')
           .borderRadius(28)
-          .align(Alignment.BottomEnd)
-          .offset({ x: -24, y: -104 })
+          .margin({ right: 24, bottom: 104 })
           .onClick(() => {
             this.goToAddPaper()
           })
-      }
-
-      // 批量操作栏
-      if (this.selectionMode) {
-        Row({ space: 12 }) {
-          Text(`已选 ${this.selectedIds.length} 篇`)
-            .fontSize(13)
-            .fontColor('#333333')
-            .layoutWeight(1)
-          Text(this.selectedIds.length === this.papers.length && this.papers.length > 0 ? '取消全选' : '全选')
-            .fontSize(14)
-            .fontColor('#4A90D9')
-            .onClick(() => {
-              this.toggleAllSelection()
-            })
-          Button('删除')
-            .fontSize(14)
-            .backgroundColor('#D94444')
-            .fontColor(Color.White)
-            .borderRadius(8)
-            .enabled(this.selectedIds.length > 0)
-            .onClick(() => {
-              this.confirmDeleteSelected()
-            })
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-        .backgroundColor(Color.White)
-        .borderRadius(16)
-        .shadow({ radius: 12, color: '#1F000000', offsetY: -2 })
-        .margin({ left: 16, right: 16, bottom: 96 })
-        .align(Alignment.Bottom)
       }
     }
     .width('100%')
@@ -661,6 +535,13 @@ struct MainPage {
                 Text(folder.name)
                   .fontSize(15)
                   .layoutWeight(1)
+                Text('⤓')
+                  .fontSize(16)
+                  .fontColor('#44B949')
+                  .padding({ left: 8, right: 8 })
+                  .onClick(() => {
+                    this.exportCategoryToLatex(folder.id, folder.name)
+                  })
                 Text(`${folder.color}`)
                   .fontSize(12)
                   .fontColor('#999999')
@@ -708,6 +589,13 @@ struct MainPage {
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .layoutWeight(1)
+          Text('导出BibTeX')
+            .fontSize(14)
+            .fontColor('#44B949')
+            .margin({ right: 12 })
+            .onClick(() => {
+              this.exportFilteredToLatex()
+            })
           Text('清除筛选')
             .fontSize(14)
             .fontColor('#4A90D9')
@@ -780,12 +668,9 @@ struct MainPage {
         .databaseAccess(true)
         .geolocationAccess(false)
         .onAttach(() => {
-          console.log('Web component attached')
-          // 组件附加后立即尝试设置下载委托
           setTimeout(() => {
-            if (!this.downloadDelegateSet && this.webController) {
-              console.log('Attempting to set download delegate in onAttach...')
-              this.retrySetDownloadDelegate(0)
+            if (this.downloadService !== undefined) {
+              this.downloadService.attachToController(this.webController)
             }
           }, 100)
         })
@@ -794,19 +679,14 @@ struct MainPage {
           if (url !== undefined) {
             this.urlInput = url
           }
-
-          console.log('Page loaded, checking download delegate...')
-          // 页面加载完成后再次检查下载委托
-          if (!this.downloadDelegateSet && this.webController) {
-            console.log('Page loaded but download delegate not set, retrying...')
-            this.retrySetDownloadDelegate(0)
+          if (this.downloadService !== undefined) {
+            this.downloadService.attachToController(this.webController)
           }
         })
         .onControllerAttached(() => {
-          console.log('Web controller attached, attempting to set download delegate...')
-
-          // 使用更可靠的重试机制设置下载委托
-          this.retrySetDownloadDelegate(0)
+          if (this.downloadService !== undefined) {
+            this.downloadService.attachToController(this.webController)
+          }
         })
 
 
@@ -921,6 +801,59 @@ struct MainPage {
         value: '取消',
         action: () => {}
       }
+    })
+  }
+
+  // 批量选择 → 追加到 LaTeX 文献库（references.bib）
+  private async exportSelectedToLatex(): Promise<void> {
+    if (this.selectedIds.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择论文' })
+      return
+    }
+    const context = this.getUIContext().getHostContext()
+    if (context === undefined) {
+      this.getUIContext().getPromptAction().showToast({ message: '导出失败' })
+      return
+    }
+    const selected = this.allPapers.filter((p: Paper): boolean => this.selectedIds.indexOf(p.id) >= 0)
+    const result = LatexLibraryService.appendPapers(context, selected)
+    this.getUIContext().getPromptAction().showToast({
+      message: `已加入 LaTeX 文献库：新增 ${result.added} 条${result.skipped > 0 ? `，跳过重复 ${result.skipped} 条` : ''}`
+    })
+  }
+
+  // 文件夹整库导出 → 追加到 LaTeX 文献库
+  private async exportCategoryToLatex(categoryId: number, categoryName: string): Promise<void> {
+    const context = this.getUIContext().getHostContext()
+    if (context === undefined) {
+      this.getUIContext().getPromptAction().showToast({ message: '导出失败' })
+      return
+    }
+    const papers = await this.paperService.getPapersByCategory(categoryId)
+    if (papers.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '该分类暂无论文' })
+      return
+    }
+    const result = LatexLibraryService.appendPapers(context, papers)
+    this.getUIContext().getPromptAction().showToast({
+      message: `「${categoryName}」已加入 LaTeX 文献库：新增 ${result.added} 条${result.skipped > 0 ? `，跳过重复 ${result.skipped} 条` : ''}`
+    })
+  }
+
+  // 当前筛选结果导出 → 追加到 LaTeX 文献库
+  private exportFilteredToLatex(): void {
+    const context = this.getUIContext().getHostContext()
+    if (context === undefined) {
+      this.getUIContext().getPromptAction().showToast({ message: '导出失败' })
+      return
+    }
+    if (this.papers.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '暂无可导出的论文' })
+      return
+    }
+    const result = LatexLibraryService.appendPapers(context, this.papers)
+    this.getUIContext().getPromptAction().showToast({
+      message: `已加入 LaTeX 文献库：新增 ${result.added} 条${result.skipped > 0 ? `，跳过重复 ${result.skipped} 条` : ''}`
     })
   }
 
@@ -1066,6 +999,10 @@ struct MainPage {
 
   private goToDocumentScan(): void {
     this.getUIContext().getRouter().pushUrl({ url: 'pages/DocumentScanPage' })
+  }
+
+  private goToCitationExport(): void {
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/CitationExportPage' })
   }
 
   private loadUrl(): void {

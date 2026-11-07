@@ -17,3 +17,8 @@ export interface AddPaperResult {
   success: boolean
   paperId: number
 }
+
+export interface WebViewerParams {
+  url: string
+  title: string
+}

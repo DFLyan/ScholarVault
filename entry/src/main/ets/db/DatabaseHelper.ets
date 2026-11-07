@@ -314,10 +314,11 @@ export class DatabaseHelper {
       ` OR arxivId LIKE ? ESCAPE '\\'` +
       ` OR abstract LIKE ? ESCAPE '\\'` +
       ` OR keywords LIKE ? ESCAPE '\\'` +
+      ` OR notes LIKE ? ESCAPE '\\'` +
       ` ORDER BY dateAdded DESC`
     try {
       const resultSet = await this.store.querySql(sql,
-        [pattern, pattern, pattern, pattern, pattern, pattern, pattern])
+        [pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern])
       return this.resultSetToPapers(resultSet)
     } catch (e) {
       hilog.error(DOMAIN, TAG, `Search papers failed: ${(e as Error).message}`)

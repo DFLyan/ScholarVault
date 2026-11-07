@@ -2,6 +2,7 @@ import { picker, fileIo as fs } from '@kit.CoreFileKit'
 import { Paper } from '../model/PaperModel'
 import { PaperService } from '../service/PaperService'
 import { CitationService } from '../service/CitationService'
+import { LatexLibraryService } from '../service/LatexLibraryService'
 import { CitationFormat, CitationFormatHelper } from '../model/CitationStyle'
 import { CitationExportParams } from '../model/RouteParams'
 import { pasteboard } from '@kit.BasicServicesKit'
@@ -15,6 +16,7 @@ struct CitationExportPage {
   @State citationText: string = ''
   @State allPapers: Array<Paper> = []
   @State exportAll: boolean = false
+  @State latexCount: number = 0
   private paperService: PaperService = new PaperService()
   private paperId: number = 0
 
@@ -28,7 +30,15 @@ struct CitationExportPage {
       }
     }
     this.allPapers = await this.paperService.getAllPapers()
+    this.refreshLatexCount()
     this.updateCitation()
+  }
+
+  private refreshLatexCount(): void {
+    const context = this.getUIContext().getHostContext()
+    if (context !== undefined) {
+      this.latexCount = LatexLibraryService.countEntries(context)
+    }
   }
 
   build() {
@@ -140,6 +150,43 @@ struct CitationExportPage {
             .onClick(() => {
               this.exportToFile()
             })
+
+          // LaTeX 文献库（应用内规范化 references.bib，各处导出均追加到此）
+          Column({ space: 10 }) {
+            Text('LaTeX 文献库')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+            Text(`应用内维护的 references.bib，当前 ${this.latexCount} 条。论文页、批量选择、文件夹导出均追加到此库，可随时导出副本到本地。`)
+              .fontSize(12)
+              .fontColor('#999999')
+              .lineHeight(17)
+
+            Button('追加全部论文到文献库')
+              .fontSize(14)
+              .backgroundColor('#44B949')
+              .fontColor(Color.White)
+              .borderRadius(8)
+              .width('100%')
+              .onClick(() => {
+                this.appendAllToLatex()
+              })
+
+            Button('导出文献库副本 (.bib)')
+              .fontSize(14)
+              .backgroundColor(Color.White)
+              .fontColor('#44B949')
+              .border({ width: 1, color: '#44B949', style: BorderStyle.Solid })
+              .borderRadius(8)
+              .width('100%')
+              .onClick(() => {
+                this.exportLatexLibrary()
+              })
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(Color.White)
+          .borderRadius(12)
+          .alignItems(HorizontalAlign.Start)
         }
         .padding(16)
       }
@@ -181,6 +228,49 @@ struct CitationExportPage {
         fs.writeSync(file.fd, this.citationText)
         fs.closeSync(file)
         this.getUIContext().getPromptAction().showToast({ message: '导出成功' })
+      }
+    } catch (e) {
+      this.getUIContext().getPromptAction().showToast({ message: '导出失败' })
+    }
+  }
+
+  // 全库追加到应用内 LaTeX 文献库（按 citeKey 去重）
+  private appendAllToLatex(): void {
+    const context = this.getUIContext().getHostContext()
+    if (context === undefined) {
+      this.getUIContext().getPromptAction().showToast({ message: '导出失败' })
+      return
+    }
+    if (this.allPapers.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '暂无可导出的论文' })
+      return
+    }
+    const result = LatexLibraryService.appendPapers(context, this.allPapers)
+    this.refreshLatexCount()
+    this.getUIContext().getPromptAction().showToast({
+      message: `已追加到 LaTeX 文献库：新增 ${result.added} 条${result.skipped > 0 ? `，跳过重复 ${result.skipped} 条` : ''}`
+    })
+  }
+
+  // 导出应用内 LaTeX 文献库副本
+  private async exportLatexLibrary(): Promise<void> {
+    const context = this.getUIContext().getHostContext()
+    if (context === undefined) {
+      this.getUIContext().getPromptAction().showToast({ message: '导出失败' })
+      return
+    }
+    if (this.latexCount === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '文献库为空，请先追加论文' })
+      return
+    }
+    try {
+      const options = new picker.DocumentSaveOptions()
+      options.newFileNames = ['references.bib']
+      const docPicker = new picker.DocumentViewPicker()
+      const uris: Array<string> = await docPicker.save(options)
+      if (uris.length > 0) {
+        const ok = LatexLibraryService.saveLibraryToUri(context, uris[0])
+        this.getUIContext().getPromptAction().showToast({ message: ok ? 'LaTeX 文献库已导出' : '导出失败' })
       }
     } catch (e) {
       this.getUIContext().getPromptAction().showToast({ message: '导出失败' })

@@ -11,8 +11,8 @@
 - 阅读状态（未读 / 在读 / 已读）、5 星评分、收藏、置顶
 - 多维度排序（添加时间 / 年份 / 标题 / 最近阅读 / 评分 / 自定义）与筛选（状态 / 收藏）
 - 自定义排序下长按拖拽调整论文位置，顺序持久化保存
-- 批量选择删除、左滑快捷删除
-- 文件夹与标签双维度分类
+- 批量选择删除、左滑快捷删除、批量导出 BibTeX
+- 文件夹与标签双维度分类，文件夹/筛选结果一键导出 BibTeX
 - 沉浸式底部浮动 dock 导航（毛玻璃 + 阴影）
 
 ### PDF 阅读器
@@ -23,10 +23,12 @@
 - 阅读进度自动记录，读到末页自动标记为已读
 
 ### 文献检索与推荐
-- 论文库元数据搜索 + PDF 全文检索（逐文档搜索，命中列表跳转对应页）
+- 论文库元数据搜索（含笔记）+ PDF 全文检索（逐文档搜索，命中列表跳转对应页）
 - 引用数自动获取（OpenAlex API）
 - 相关文献推荐（Semantic Scholar API）
 - 引用数一键刷新：按论文标题搜索 Semantic Scholar 候选结果，选择匹配项更新引用数并补全缺失的 DOI / 年份 / 期刊
+- 详情页 Google Scholar 标题搜索入口（Google Scholar 无公开 API，跳转网页手动核对引用信息、下载论文）
+- DOI / arXiv ID 可点击跳转原文页（doi.org / arxiv.org）
 
 ### 账户同步
 - Zotero 同步：配置用户 ID 与 API Key，拉取云端文献库自动入库（DOI / 标题去重）
@@ -39,12 +41,15 @@
 ### 引用与导入导出
 - 引用格式生成：BibTeX / APA / MLA / RIS
 - 单篇或全库导出，支持复制到剪贴板、导出为文件
+- LaTeX 文献库：应用内维护规范化 references.bib，论文详情页 / 主页批量选择 / 文件夹 / 筛选结果均可一键追加（按 citeKey 去重），支持随时导出 .bib 副本
 - BibTeX (.bib) / RIS (.ris) 文件批量导入，自动识别格式，DOI/标题重复自动跳过
 
 ### 其他
 - 重复文献检测（按 DOI / 标题归组，一键清理）
 - 统计面板：论文总数、收藏、PDF 附件、笔记数、阅读状态分布、年份分布柱状图、Top 期刊、Top 标签
+- 论文详情页可视化编辑分类（勾选标签 / 文件夹，增量增删）
 - 内置学术网站浏览器（arXiv / Semantic Scholar / Google Scholar / CrossRef 快捷入口），下载 PDF 自动导入论文库
+- 通用网页查看器（WebViewerPage）：Google Scholar 搜索、DOI / arXiv 跳转复用，下载 PDF 同样自动入库
 
 ## 技术栈
 
@@ -81,11 +86,12 @@ entry/src/main/ets/
 ├── db/                  # 数据库层（DatabaseHelper：建表、迁移、CRUD、统计查询）
 ├── model/               # 数据模型（Paper、Category、PaperNote、ReaderNote、RouteParams 等）
 ├── pages/               # 页面
-│   ├── MainPage         # 主页：论文库 / 分类 / 浏览器三个 Tab（浮动 dock、多选、拖拽排序）
+│   ├── MainPage         # 主页：论文库 / 分类 / 浏览器三个 Tab（浮动 dock、多选、拖拽排序、BibTeX 批量导出）
 │   ├── AddPaperPage     # 添加论文：DOI/arXiv、手动输入、文件导入
-│   ├── PaperDetailPage  # 论文详情：状态/评分/笔记/引用/推荐/引用刷新
+│   ├── PaperDetailPage  # 论文详情：状态/评分/笔记/引用/推荐/引用刷新/GS 搜索/分类编辑
 │   ├── PdfReaderPage    # PDF 阅读器：标注/批注/搜索/进度
-│   ├── CitationExportPage # 引用导出
+│   ├── CitationExportPage # 引用导出 + LaTeX 文献库管理
+│   ├── WebViewerPage    # 通用网页查看器（GS 搜索/DOI 跳转，下载自动入库）
 │   ├── StatisticsPage   # 统计面板
 │   ├── DuplicatesPage   # 重复检测
 │   ├── SyncSettingsPage # 账户同步（Zotero）
@@ -96,11 +102,13 @@ entry/src/main/ets/
 │   ├── MetadataFetcher  # DOI/arXiv 元数据抓取
 │   ├── CitationService  # 引用格式生成（BibTeX/APA/MLA/RIS）
 │   ├── ImportExportService # BibTeX/RIS 解析
+│   ├── LatexLibraryService # LaTeX 文献库（references.bib 追加/去重/导出）
 │   ├── FullTextSearchService # PDF 全文检索
 │   ├── DuplicateService # 重复检测
 │   ├── ScholarService   # OpenAlex 引用数 + Semantic Scholar 推荐/搜索
 │   ├── SyncService      # Zotero 同步（配置存储 + 拉取解析）
 │   ├── DocumentScanService # 文档扫描（文本提取 + 标题匹配）
+│   ├── WebDownloadService # 浏览器下载委托（下载/入库/重试，多页面复用）
 │   └── CategoryService  # 分类业务
 └── entryability/        # Ability 入口
 ```

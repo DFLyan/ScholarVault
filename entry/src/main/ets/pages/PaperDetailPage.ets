@@ -2,7 +2,9 @@ import { Paper, ReadStatus, ReadStatusHelper } from '../model/PaperModel'
 import { Category } from '../model/CategoryModel'
 import { PaperNote } from '../model/NoteModel'
 import { PaperService } from '../service/PaperService'
-import { PaperDetailParams, PdfReaderParams, CitationExportParams } from '../model/RouteParams'
+import { CategoryService } from '../service/CategoryService'
+import { LatexLibraryService } from '../service/LatexLibraryService'
+import { PaperDetailParams, PdfReaderParams, CitationExportParams, WebViewerParams } from '../model/RouteParams'
 import { CitationFormat, CitationFormatHelper } from '../model/CitationStyle'
 import { CitationService } from '../service/CitationService'
 import { ScholarService, RelatedPaper } from '../service/ScholarService'
@@ -33,7 +35,11 @@ struct PaperDetailPage {
   @State candidates: Array<RelatedPaper> = []
   @State showCandidates: boolean = false
   @State fetchingCandidates: boolean = false
+  @State showCategorySheet: boolean = false
+  @State allCategories: Array<Category> = []
+  @State selectedCategoryIds: Array<number> = []
   private paperService: PaperService = new PaperService()
+  private categoryService: CategoryService = new CategoryService()
   private paperId: number = 0
 
   async aboutToAppear(): Promise<void> {
@@ -259,11 +265,19 @@ struct PaperDetailPage {
             Text(`DOI: ${this.paper.doi}`)
               .fontSize(13)
               .fontColor('#4A90D9')
+              .decoration({ type: TextDecorationType.Underline })
+              .onClick(() => {
+                this.openWebViewer(`https://doi.org/${this.paper.doi}`, this.paper.title)
+              })
           }
           if (this.paper.arxivId.length > 0) {
             Text(`arXiv: ${this.paper.arxivId}`)
               .fontSize(13)
               .fontColor('#4A90D9')
+              .decoration({ type: TextDecorationType.Underline })
+              .onClick(() => {
+                this.openWebViewer(`https://arxiv.org/abs/${this.paper.arxivId}`, this.paper.title)
+              })
           }
         }
         .width('100%')
@@ -368,6 +382,17 @@ struct PaperDetailPage {
               .height(16)
           }
         }
+
+        // Google Scholar 无公开 API，提供标题搜索入口手动核对引用信息
+        Text('GS 搜索')
+          .fontSize(13)
+          .fontColor('#4A90D9')
+          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+          .backgroundColor('#E8F0FE')
+          .borderRadius(8)
+          .onClick(() => {
+            this.searchOnGoogleScholar()
+          })
       }
       .width('100%')
     }
@@ -477,9 +502,19 @@ struct PaperDetailPage {
   @Builder
   CategoriesSection() {
     Column({ space: 8 }) {
-      Text('分类标签')
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
+      Row() {
+        Text('分类标签')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .layoutWeight(1)
+        Text('编辑')
+          .fontSize(14)
+          .fontColor('#4A90D9')
+          .onClick(() => {
+            this.openCategorySheet()
+          })
+      }
+      .width('100%')
 
       if (this.categories.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -502,6 +537,74 @@ struct PaperDetailPage {
     .padding(16)
     .backgroundColor(Color.White)
     .borderRadius(12)
+    .alignItems(HorizontalAlign.Start)
+    .bindSheet($$this.showCategorySheet, this.CategorySheetBuilder(), {
+      height: SheetSize.MEDIUM,
+      dragBar: true,
+      backgroundColor: Color.White,
+      onDisappear: () => {
+        this.showCategorySheet = false
+      }
+    })
+  }
+
+  @Builder
+  CategorySheetBuilder() {
+    Column({ space: 12 }) {
+      Text('编辑分类')
+        .fontSize(17)
+        .fontWeight(FontWeight.Bold)
+      Text('勾选要加入的标签或文件夹，取消勾选即移除')
+        .fontSize(12)
+        .fontColor('#999999')
+
+      if (this.allCategories.length === 0) {
+        Text('暂无可用分类，请先在分类管理中创建')
+          .fontSize(13)
+          .fontColor('#999999')
+          .margin({ top: 16 })
+      } else {
+        Scroll() {
+          Column({ space: 6 }) {
+            ForEach(this.allCategories, (cat: Category) => {
+              Row() {
+                Checkbox()
+                  .select(this.selectedCategoryIds.indexOf(cat.id) >= 0)
+                  .selectedColor('#4A90D9')
+                  .onChange((checked: boolean) => {
+                    this.toggleCategorySelection(cat.id, checked)
+                  })
+                Text(cat.type === 'folder' ? '📁' : '🏷️')
+                  .fontSize(16)
+                  .margin({ left: 8, right: 8 })
+                Text(cat.name)
+                  .fontSize(14)
+                  .layoutWeight(1)
+              }
+              .width('100%')
+              .padding(10)
+              .backgroundColor('#F8F8F8')
+              .borderRadius(8)
+            }, (cat: Category) => `${cat.id}`)
+          }
+          .width('100%')
+        }
+        .layoutWeight(1)
+      }
+
+      Button('保存')
+        .fontSize(14)
+        .backgroundColor('#4A90D9')
+        .fontColor(Color.White)
+        .borderRadius(8)
+        .width('100%')
+        .onClick(() => {
+          this.saveCategorySelection()
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .padding(16)
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -670,6 +773,17 @@ struct PaperDetailPage {
         .width('100%')
         .onClick(() => {
           this.goToCitationExport()
+        })
+
+      Button('加入 LaTeX 文献库')
+        .fontSize(16)
+        .backgroundColor(Color.White)
+        .fontColor('#44B949')
+        .border({ width: 1, color: '#44B949', style: BorderStyle.Solid })
+        .borderRadius(8)
+        .width('100%')
+        .onClick(() => {
+          this.addToLatexLibrary()
         })
 
       Button('删除论文')
@@ -860,6 +974,71 @@ struct PaperDetailPage {
   private goToCitationExport(): void {
     const params: CitationExportParams = { paperId: this.paper.id }
     this.getUIContext().getRouter().pushUrl({ url: 'pages/CitationExportPage', params: params })
+  }
+
+  private openWebViewer(url: string, title: string): void {
+    const params: WebViewerParams = { url: url, title: title }
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/WebViewerPage', params: params })
+  }
+
+  // Google Scholar 标题搜索（无公开 API，跳转网页手动核对/下载）
+  private searchOnGoogleScholar(): void {
+    const query = encodeURIComponent(this.paper.title)
+    this.openWebViewer(`https://scholar.google.com/scholar?hl=zh-CN&q=${query}`, 'Google Scholar')
+  }
+
+  private async openCategorySheet(): Promise<void> {
+    this.allCategories = await this.categoryService.getAllCategories()
+    const currentIds: Array<number> = []
+    for (let i = 0; i < this.categories.length; i++) {
+      currentIds.push(this.categories[i].id)
+    }
+    this.selectedCategoryIds = currentIds
+    this.showCategorySheet = true
+  }
+
+  private toggleCategorySelection(categoryId: number, checked: boolean): void {
+    const index = this.selectedCategoryIds.indexOf(categoryId)
+    if (checked && index < 0) {
+      this.selectedCategoryIds.push(categoryId)
+    } else if (!checked && index >= 0) {
+      this.selectedCategoryIds.splice(index, 1)
+    }
+  }
+
+  private async saveCategorySelection(): Promise<void> {
+    // 对比勾选结果与当前分类，做增量增删
+    for (let i = 0; i < this.selectedCategoryIds.length; i++) {
+      const cid = this.selectedCategoryIds[i]
+      if (!this.categories.some((c: Category): boolean => c.id === cid)) {
+        await this.paperService.addPaperToCategory(this.paperId, cid)
+      }
+    }
+    for (let i = 0; i < this.categories.length; i++) {
+      const cid = this.categories[i].id
+      if (this.selectedCategoryIds.indexOf(cid) < 0) {
+        await this.paperService.removePaperFromCategory(this.paperId, cid)
+      }
+    }
+    this.categories = await this.paperService.getCategoriesForPaper(this.paperId)
+    this.showCategorySheet = false
+    this.getUIContext().getPromptAction().showToast({ message: '分类已更新' })
+  }
+
+  // 追加当前论文到应用内 LaTeX 文献库（references.bib，按 citeKey 去重）
+  private addToLatexLibrary(): void {
+    const context = this.getUIContext().getHostContext()
+    if (context === undefined) {
+      this.getUIContext().getPromptAction().showToast({ message: '导出失败' })
+      return
+    }
+    const single: Array<Paper> = [this.paper]
+    const result = LatexLibraryService.appendPapers(context, single)
+    if (result.added > 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '已加入 LaTeX 文献库' })
+    } else {
+      this.getUIContext().getPromptAction().showToast({ message: '该论文已在 LaTeX 文献库中' })
+    }
   }
 
   private async confirmDelete(): Promise<void> {
