@@ -10,6 +10,15 @@ export class RelatedPaper {
   venue: string = ''
   citationCount: number = -1
   doi: string = ''
+  source: string = ''
+}
+
+export class CitationResult {
+  source: string = ''
+  count: number = -1
+  year: number = 0
+  venue: string = ''
+  doi: string = ''
 }
 
 export class ScholarService {
@@ -148,6 +157,7 @@ export class ScholarService {
       }
       const related = new RelatedPaper()
       related.title = title
+      related.source = 'Google Scholar'
 
       // gs_a 行格式：作者列表 - 来源, 年份 - 域名
       const infoMatch = chunk.match(/<div class="gs_a">([\s\S]*?)<\/div>/)
@@ -204,6 +214,7 @@ export class ScholarService {
         if (extIds !== undefined) {
           related.doi = extIds['DOI'] ?? ''
         }
+        related.source = 'Semantic Scholar'
         if (related.title.length > 0) {
           results.push(related)
         }
@@ -236,6 +247,7 @@ export class ScholarService {
         if (extIds !== undefined) {
           related.doi = extIds['DOI'] ?? ''
         }
+        related.source = 'Semantic Scholar'
         if (related.title.length > 0) {
           results.push(related)
         }
@@ -244,6 +256,287 @@ export class ScholarService {
     } catch (e) {
       hilog.error(DOMAIN, TAG, `Parse recommendations failed: ${(e as Error).message}`)
       return results
+    }
+  }
+
+  // ===== 引用数多源同步（OpenAlex / CrossRef / Semantic Scholar，均免费公开、无限流）=====
+
+  // 按 DOI 瀑布查询：OpenAlex → CrossRef → Semantic Scholar，任一成功即返回
+  static async fetchCitationByDoi(doi: string): Promise<CitationResult | undefined> {
+    const openalex = await ScholarService.fetchFromOpenAlexByDoi(doi)
+    if (openalex !== undefined) {
+      return openalex
+    }
+    const crossref = await ScholarService.fetchFromCrossRefByDoi(doi)
+    if (crossref !== undefined) {
+      return crossref
+    }
+    const s2 = await ScholarService.fetchFromSemanticScholarByDoi(doi)
+    if (s2 !== undefined) {
+      return s2
+    }
+    return undefined
+  }
+
+  // 标题多源候选：OpenAlex + Semantic Scholar + CrossRef 合并去重，供用户选择确认
+  static async fetchTitleCandidatesMulti(title: string, limit: number): Promise<Array<RelatedPaper>> {
+    const merged: Array<RelatedPaper> = []
+    const seenDois: Array<string> = []
+    const seenTitles: Array<string> = []
+    const sources: Array<Promise<Array<RelatedPaper>>> = [
+      ScholarService.fetchOpenAlexTitleCandidates(title, limit),
+      ScholarService.fetchPaperCandidates(title, limit),
+      ScholarService.fetchCrossRefTitleCandidates(title, limit)
+    ]
+    const all = await Promise.all(sources)
+    for (let s = 0; s < all.length; s++) {
+      const list = all[s]
+      for (let i = 0; i < list.length; i++) {
+        const item = list[i]
+        const doiKey = item.doi.toLowerCase()
+        const titleKey = item.title.toLowerCase().replace(/\s+/g, ' ').trim()
+        if (item.doi.length > 0 && seenDois.indexOf(doiKey) >= 0) {
+          continue
+        }
+        if (item.doi.length === 0 && seenTitles.indexOf(titleKey) >= 0) {
+          continue
+        }
+        if (item.doi.length > 0) {
+          seenDois.push(doiKey)
+        } else {
+          seenTitles.push(titleKey)
+        }
+        merged.push(item)
+        if (merged.length >= limit) {
+          return merged
+        }
+      }
+    }
+    return merged
+  }
+
+  private static async fetchFromOpenAlexByDoi(doi: string): Promise<CitationResult | undefined> {
+    const url = `https://api.openalex.org/works/https://doi.org/${doi}`
+    try {
+      const request = http.createHttp()
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/json' },
+        connectTimeout: 15000,
+        readTimeout: 15000
+      })
+      request.destroy()
+      if (response.responseCode === 200 && typeof response.result === 'string') {
+        return ScholarService.parseOpenAlexWork(JSON.parse(response.result) as Record<string, Object>, 'OpenAlex')
+      }
+      return undefined
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `OpenAlex by DOI failed: ${(e as Error).message}`)
+      return undefined
+    }
+  }
+
+  private static async fetchFromCrossRefByDoi(doi: string): Promise<CitationResult | undefined> {
+    const url = `https://api.crossref.org/works/${doi}`
+    try {
+      const request = http.createHttp()
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/json' },
+        connectTimeout: 15000,
+        readTimeout: 15000
+      })
+      request.destroy()
+      if (response.responseCode === 200 && typeof response.result === 'string') {
+        const obj = JSON.parse(response.result) as Record<string, Object>
+        const message = obj['message'] as Record<string, Object>
+        if (message === undefined) {
+          return undefined
+        }
+        const result = new CitationResult()
+        result.source = 'CrossRef'
+        const count = message['is-referenced-by-count'] as number
+        result.count = count ?? -1
+        const issued = message['issued'] as Record<string, Object>
+        if (issued !== undefined) {
+          const dateParts = issued['date-parts'] as Array<Array<number>>
+          if (dateParts !== undefined && dateParts.length > 0 && dateParts[0].length > 0) {
+            result.year = dateParts[0][0]
+          }
+        }
+        const containers = message['container-title'] as Array<string>
+        if (containers !== undefined && containers.length > 0) {
+          result.venue = containers[0]
+        }
+        result.doi = doi
+        if (result.count >= 0) {
+          return result
+        }
+      }
+      return undefined
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `CrossRef by DOI failed: ${(e as Error).message}`)
+      return undefined
+    }
+  }
+
+  private static async fetchFromSemanticScholarByDoi(doi: string): Promise<CitationResult | undefined> {
+    const url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${doi}` +
+      `?fields=title,year,venue,citationCount,externalIds`
+    try {
+      const request = http.createHttp()
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/json' },
+        connectTimeout: 15000,
+        readTimeout: 15000
+      })
+      request.destroy()
+      if (response.responseCode === 200 && typeof response.result === 'string') {
+        const related = ScholarService.parseSearchResults(`{"data":[${response.result}]}`)[0]
+        if (related !== undefined) {
+          const result = new CitationResult()
+          result.source = 'Semantic Scholar'
+          result.count = related.citationCount
+          result.year = related.year
+          result.venue = related.venue
+          result.doi = related.doi
+          if (result.count >= 0) {
+            return result
+          }
+        }
+      }
+      return undefined
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Semantic Scholar by DOI failed: ${(e as Error).message}`)
+      return undefined
+    }
+  }
+
+  private static async fetchOpenAlexTitleCandidates(title: string, limit: number): Promise<Array<RelatedPaper>> {
+    const query = encodeURIComponent(title)
+    const url = `https://api.openalex.org/works?filter=title.search:${query}&per-page=${limit}`
+    try {
+      const request = http.createHttp()
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/json' },
+        connectTimeout: 15000,
+        readTimeout: 15000
+      })
+      request.destroy()
+      if (response.responseCode === 200 && typeof response.result === 'string') {
+        const obj = JSON.parse(response.result) as Record<string, Object>
+        const results = obj['results'] as Array<Record<string, Object>>
+        const candidates: Array<RelatedPaper> = []
+        if (results === undefined) {
+          return candidates
+        }
+        for (let i = 0; i < results.length; i++) {
+          const work = ScholarService.parseOpenAlexWork(results[i], 'OpenAlex')
+          const related = new RelatedPaper()
+          related.title = (results[i]['title'] as string) ?? ''
+          related.year = work !== undefined ? work.year : 0
+          related.venue = work !== undefined ? work.venue : ''
+          related.citationCount = work !== undefined ? work.count : -1
+          related.doi = work !== undefined ? work.doi : ''
+          related.source = 'OpenAlex'
+          if (related.title.length > 0) {
+            candidates.push(related)
+          }
+        }
+        return candidates
+      }
+      return []
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `OpenAlex title search failed: ${(e as Error).message}`)
+      return []
+    }
+  }
+
+  private static async fetchCrossRefTitleCandidates(title: string, limit: number): Promise<Array<RelatedPaper>> {
+    const query = encodeURIComponent(title)
+    const url = `https://api.crossref.org/works?query.bibliographic=${query}&rows=${limit}` +
+      `&select=DOI,title,is-referenced-by-count,issued,container-title`
+    try {
+      const request = http.createHttp()
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: { 'Accept': 'application/json' },
+        connectTimeout: 15000,
+        readTimeout: 15000
+      })
+      request.destroy()
+      if (response.responseCode === 200 && typeof response.result === 'string') {
+        const obj = JSON.parse(response.result) as Record<string, Object>
+        const message = obj['message'] as Record<string, Object>
+        const items: Array<RelatedPaper> = []
+        if (message === undefined) {
+          return items
+        }
+        const works = message['items'] as Array<Record<string, Object>>
+        if (works === undefined) {
+          return items
+        }
+        for (let i = 0; i < works.length; i++) {
+          const work = works[i]
+          const related = new RelatedPaper()
+          const titleArr = work['title'] as Array<string>
+          related.title = titleArr !== undefined && titleArr.length > 0 ? titleArr[0] : ''
+          const count = work['is-referenced-by-count'] as number
+          related.citationCount = count ?? -1
+          related.doi = (work['DOI'] as string) ?? ''
+          const issued = work['issued'] as Record<string, Object>
+          if (issued !== undefined) {
+            const dateParts = issued['date-parts'] as Array<Array<number>>
+            if (dateParts !== undefined && dateParts.length > 0 && dateParts[0].length > 0) {
+              related.year = dateParts[0][0]
+            }
+          }
+          const containers = work['container-title'] as Array<string>
+          if (containers !== undefined && containers.length > 0) {
+            related.venue = containers[0]
+          }
+          related.source = 'CrossRef'
+          if (related.title.length > 0) {
+            items.push(related)
+          }
+        }
+        return items
+      }
+      return []
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `CrossRef title search failed: ${(e as Error).message}`)
+      return []
+    }
+  }
+
+  // 解析 OpenAlex 单个 work 对象（cited_by_count / publication_year / primary_location.source）
+  private static parseOpenAlexWork(work: Record<string, Object>, source: string): CitationResult | undefined {
+    try {
+      const result = new CitationResult()
+      result.source = source
+      const count = work['cited_by_count'] as number
+      if (count === undefined) {
+        return undefined
+      }
+      result.count = count
+      result.year = (work['publication_year'] as number) ?? 0
+      const doiUrl = (work['doi'] as string) ?? ''
+      if (doiUrl.startsWith('https://doi.org/')) {
+        result.doi = doiUrl.substring('https://doi.org/'.length)
+      }
+      const primaryLocation = work['primary_location'] as Record<string, Object>
+      if (primaryLocation !== undefined) {
+        const sourceObj = primaryLocation['source'] as Record<string, Object>
+        if (sourceObj !== undefined) {
+          result.venue = (sourceObj['display_name'] as string) ?? ''
+        }
+      }
+      return result
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Parse OpenAlex work failed: ${(e as Error).message}`)
+      return undefined
     }
   }
 }

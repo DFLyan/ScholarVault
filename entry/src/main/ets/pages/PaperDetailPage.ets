@@ -7,7 +7,7 @@ import { LatexLibraryService } from '../service/LatexLibraryService'
 import { PaperDetailParams, PdfReaderParams, CitationExportParams, WebViewerParams } from '../model/RouteParams'
 import { CitationFormat, CitationFormatHelper } from '../model/CitationStyle'
 import { CitationService } from '../service/CitationService'
-import { ScholarService, RelatedPaper } from '../service/ScholarService'
+import { ScholarService, RelatedPaper, CitationResult } from '../service/ScholarService'
 import { pasteboard } from '@kit.BasicServicesKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 
@@ -156,6 +156,14 @@ struct PaperDetailPage {
                   .fontWeight(FontWeight.Medium)
                   .width('100%')
                 Row({ space: 8 }) {
+                  if (candidate.source.length > 0) {
+                    Text(candidate.source)
+                      .fontSize(11)
+                      .fontColor('#888888')
+                      .backgroundColor('#F0F0F0')
+                      .borderRadius(6)
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  }
                   if (candidate.year > 0) {
                     Text(`${candidate.year}`)
                       .fontSize(12)
@@ -375,7 +383,7 @@ struct PaperDetailPage {
               .fontSize(16)
               .fontColor('#4A90D9')
               .onClick(() => {
-                this.openCandidateSheet()
+                this.refreshCitationMultiSource()
               })
           } else {
             LoadingProgress()
@@ -865,6 +873,69 @@ struct PaperDetailPage {
       return
     }
     this.showCandidates = true
+  }
+
+  // 引用数多源刷新：有 DOI 按 DOI 瀑布查询（OpenAlex → CrossRef → Semantic Scholar），
+  // 命中直接确认更新；无 DOI 或全部失败则按标题多源合并候选，供用户选择
+  private async refreshCitationMultiSource(): Promise<void> {
+    if (this.fetchingCandidates) {
+      return
+    }
+    this.fetchingCandidates = true
+    if (this.paper.doi.length > 0) {
+      const result = await ScholarService.fetchCitationByDoi(this.paper.doi)
+      if (result !== undefined && result.count >= 0) {
+        this.fetchingCandidates = false
+        this.confirmApplyCitationResult(result)
+        return
+      }
+    }
+    // DOI 缺失或按 DOI 查询失败：按标题多源搜索候选
+    this.candidateSource = 'OpenAlex / Semantic Scholar / CrossRef'
+    this.candidates = await ScholarService.fetchTitleCandidatesMulti(this.paper.title, 10)
+    this.fetchingCandidates = false
+    if (this.candidates.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '多数据源均未查到该论文，可尝试 GS 引用按钮' })
+      return
+    }
+    this.showCandidates = true
+  }
+
+  private confirmApplyCitationResult(result: CitationResult): void {
+    this.getUIContext().showAlertDialog({
+      title: '更新引用数',
+      message: `${result.source} 查询到该论文（DOI 匹配）被引 ${result.count} 次，` +
+        `当前记录 ${this.paper.citationCount >= 0 ? this.paper.citationCount : 0} 次，是否更新？`,
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '更新',
+        fontColor: '#4A90D9',
+        action: () => {
+          this.applyCitationResult(result)
+        }
+      }
+    })
+  }
+
+  private async applyCitationResult(result: CitationResult): Promise<void> {
+    this.paper.citationCount = result.count
+    await this.paperService.updateCitationCount(this.paperId, result.count)
+    // 补全缺失元数据
+    if (this.paper.year <= 0 && result.year > 0) {
+      this.paper.year = result.year
+    }
+    if (this.paper.journal.length === 0 && result.venue.length > 0) {
+      this.paper.journal = result.venue
+    }
+    this.paper.dateModified = Date.now()
+    await this.paperService.updatePaper(this.paper)
+    this.updateCitation()
+    this.getUIContext().getPromptAction().showToast({ message: `引用数已更新（来源：${result.source}）` })
   }
 
   // Google Scholar 标题搜索：自动抓取搜索页并解析被引数，成功后展示候选供确认更新

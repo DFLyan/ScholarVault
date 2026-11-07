@@ -26,7 +26,7 @@
 - 论文库元数据搜索（含笔记）+ PDF 全文检索（逐文档搜索，命中列表跳转对应页）
 - 引用数自动获取（OpenAlex API）
 - 相关文献推荐（Semantic Scholar API）
-- 引用数一键刷新：按论文标题搜索 Semantic Scholar 候选结果，选择匹配项更新引用数并补全缺失的 DOI / 年份 / 期刊
+- 引用数多源一键刷新：有 DOI 时按 OpenAlex → CrossRef → Semantic Scholar 瀑布精确查询，命中确认即更新；无 DOI 或查询失败时按标题合并三源候选（去重、标注来源），选择匹配项更新引用数并补全缺失的 DOI / 年份 / 期刊
 - 详情页"GS 引用"：自动请求 Google Scholar 标题搜索页并解析被引数（同 Zotero GS 插件做法），选择候选即更新引用数/年份/来源；被限流或触发人机验证时降级为网页版手动核对
 - DOI / arXiv ID 可点击跳转原文页（doi.org / arxiv.org）
 
@@ -105,7 +105,7 @@ entry/src/main/ets/
 │   ├── LatexLibraryService # LaTeX 文献库（references.bib 追加/去重/导出）
 │   ├── FullTextSearchService # PDF 全文检索
 │   ├── DuplicateService # 重复检测
-│   ├── ScholarService   # OpenAlex 引用数 + Semantic Scholar 推荐/搜索
+│   ├── ScholarService   # 多源引用数（OpenAlex / CrossRef / Semantic Scholar / Google Scholar）+ 相关文献推荐
 │   ├── SyncService      # Zotero 同步（配置存储 + 拉取解析）
 │   ├── DocumentScanService # 文档扫描（文本提取 + 标题匹配）
 │   ├── WebDownloadService # 浏览器下载委托（下载/入库/重试，多页面复用）
