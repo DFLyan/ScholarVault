@@ -112,6 +112,9 @@ export class HuaweiAccountService {
     if (err.code === 1001502014) {
       return '缺少所需 scope/permission，请检查 AGC 配置'
     }
+    if (err.code === 1001502003) {
+      return '登录参数无效：请确认 module.json5 已配置 AGC 真实 Client ID（当前可能仍是占位值），且签名 Profile 与 AGC 应用一致（见 README「华为云服务配置」）'
+    }
     return `登录失败（${err.code}）：${err.message}`
   }
 }
