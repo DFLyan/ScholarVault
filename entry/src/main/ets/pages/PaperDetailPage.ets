@@ -35,6 +35,7 @@ struct PaperDetailPage {
   @State candidates: Array<RelatedPaper> = []
   @State showCandidates: boolean = false
   @State fetchingCandidates: boolean = false
+  @State candidateSource: string = 'Semantic Scholar'
   @State showCategorySheet: boolean = false
   @State allCategories: Array<Category> = []
   @State selectedCategoryIds: Array<number> = []
@@ -129,7 +130,7 @@ struct PaperDetailPage {
       Text('选择匹配的论文')
         .fontSize(17)
         .fontWeight(FontWeight.Bold)
-      Text('点击搜索结果更新引用数并补全缺失信息（数据源：Semantic Scholar，Google Scholar 无公开 API）')
+      Text(`点击搜索结果更新引用数并补全缺失信息（数据源：${this.candidateSource}）`)
         .fontSize(12)
         .fontColor('#999999')
         .lineHeight(17)
@@ -383,15 +384,15 @@ struct PaperDetailPage {
           }
         }
 
-        // Google Scholar 无公开 API，提供标题搜索入口手动核对引用信息
-        Text('GS 搜索')
+        // Google Scholar 无公开 API：自动抓取搜索页解析被引数（同 Zotero GS 插件做法），失败降级网页版
+        Text('GS 引用')
           .fontSize(13)
           .fontColor('#4A90D9')
           .padding({ left: 8, right: 8, top: 3, bottom: 3 })
           .backgroundColor('#E8F0FE')
           .borderRadius(8)
           .onClick(() => {
-            this.searchOnGoogleScholar()
+            this.openGsCandidateSheet()
           })
       }
       .width('100%')
@@ -856,10 +857,44 @@ struct PaperDetailPage {
       return
     }
     this.fetchingCandidates = true
+    this.candidateSource = 'Semantic Scholar'
     this.candidates = await ScholarService.fetchPaperCandidates(this.paper.title, 8)
     this.fetchingCandidates = false
     if (this.candidates.length === 0) {
       this.getUIContext().getPromptAction().showToast({ message: '未搜索到匹配结果，请稍后重试' })
+      return
+    }
+    this.showCandidates = true
+  }
+
+  // Google Scholar 标题搜索：自动抓取搜索页并解析被引数，成功后展示候选供确认更新
+  private async openGsCandidateSheet(): Promise<void> {
+    if (this.fetchingCandidates) {
+      return
+    }
+    this.fetchingCandidates = true
+    this.candidateSource = 'Google Scholar'
+    this.candidates = await ScholarService.fetchGoogleScholarCandidates(this.paper.title, 8)
+    this.fetchingCandidates = false
+    if (this.candidates.length === 0) {
+      // 自动解析失败（被限流/触发验证）时提供网页版手动核对入口
+      this.getUIContext().showAlertDialog({
+        title: '获取失败',
+        message: 'Google Scholar 自动获取未成功（可能被限流或触发人机验证），可打开网页版手动核对。',
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        primaryButton: {
+          value: '稍后重试',
+          action: () => {}
+        },
+        secondaryButton: {
+          value: '打开网页版',
+          fontColor: '#4A90D9',
+          action: () => {
+            this.searchOnGoogleScholar()
+          }
+        }
+      })
       return
     }
     this.showCandidates = true

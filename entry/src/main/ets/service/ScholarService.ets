@@ -84,6 +84,105 @@ export class ScholarService {
     }
   }
 
+  // Google Scholar 无公开 API：模拟浏览器请求搜索页 HTML，
+  // 解析结果条目（标题/年份/来源/被引数），做法同 Zotero 的 GS 引用数插件
+  static async fetchGoogleScholarCandidates(title: string, limit: number): Promise<Array<RelatedPaper>> {
+    const query = encodeURIComponent(title)
+    const url = `https://scholar.google.com/scholar?hl=en&as_sdt=0,5&q=${query}`
+    try {
+      const request = http.createHttp()
+      const response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 15000
+      })
+      request.destroy()
+      if (response.responseCode !== 200 || typeof response.result !== 'string') {
+        hilog.error(DOMAIN, TAG, `Google Scholar request failed: ${response.responseCode}`)
+        return []
+      }
+      const html = response.result
+      // 触发人机验证/限流时 GS 返回验证页
+      if (html.indexOf('unusual traffic') >= 0 || html.indexOf('gs_captcha') >= 0 ||
+        html.indexOf('not a robot') >= 0) {
+        hilog.warn(DOMAIN, TAG, 'Google Scholar returned captcha page')
+        return []
+      }
+      return ScholarService.parseGoogleScholarHtml(html, limit)
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Google Scholar fetch error: ${(e as Error).message}`)
+      return []
+    }
+  }
+
+  private static parseGoogleScholarHtml(html: string, limit: number): Array<RelatedPaper> {
+    const results: Array<RelatedPaper> = []
+    // 每条结果的信息区以 <div class="gs_ri"> 开始，块内含 h3 标题、gs_a 作者行、Cited by 链接
+    const chunks = html.split('<div class="gs_ri">')
+    for (let i = 1; i < chunks.length && results.length < limit; i++) {
+      const chunk = chunks[i]
+      const related = ScholarService.parseGsChunk(chunk)
+      if (related !== undefined) {
+        results.push(related)
+      }
+    }
+    return results
+  }
+
+  private static parseGsChunk(chunk: string): RelatedPaper | undefined {
+    try {
+      const titleMatch = chunk.match(/<h3[^>]*>([\s\S]*?)<\/h3>/)
+      if (titleMatch === null) {
+        return undefined
+      }
+      const title = ScholarService.cleanGsText(titleMatch[1])
+      if (title.length === 0) {
+        return undefined
+      }
+      const related = new RelatedPaper()
+      related.title = title
+
+      // gs_a 行格式：作者列表 - 来源, 年份 - 域名
+      const infoMatch = chunk.match(/<div class="gs_a">([\s\S]*?)<\/div>/)
+      if (infoMatch !== null) {
+        const infoLine = ScholarService.cleanGsText(infoMatch[1])
+        const yearMatch = infoLine.match(/\b(19|20)\d{2}\b/)
+        if (yearMatch !== null) {
+          related.year = parseInt(yearMatch[0], 10)
+        }
+        const parts = infoLine.split(' - ')
+        if (parts.length >= 3) {
+          related.venue = parts[1].replace(/\b(19|20)\d{2}\b/g, '').replace(/,\s*$/, '').trim()
+        }
+      }
+
+      const citedMatch = chunk.match(/Cited by\s*([\d,]+)/)
+      if (citedMatch !== null) {
+        related.citationCount = parseInt(citedMatch[1].replace(/,/g, ''), 10)
+      }
+      return related
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, `Parse GS chunk failed: ${(e as Error).message}`)
+      return undefined
+    }
+  }
+
+  private static cleanGsText(raw: string): string {
+    let text = raw.replace(/<[^>]*>/g, ' ')
+    text = text.replace(/\[(CITATION|C|PDF|DOC|HTML|BOOK|SLIDES?)\]/gi, '')
+    text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&#39;/g, '\'').replace(/&nbsp;/g, ' ')
+    text = text.replace(/\s+/g, ' ').trim()
+    return text
+  }
+
   private static parseSearchResults(jsonStr: string): Array<RelatedPaper> {
     const results: Array<RelatedPaper> = []
     try {

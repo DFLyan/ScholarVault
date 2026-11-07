@@ -27,7 +27,7 @@
 - 引用数自动获取（OpenAlex API）
 - 相关文献推荐（Semantic Scholar API）
 - 引用数一键刷新：按论文标题搜索 Semantic Scholar 候选结果，选择匹配项更新引用数并补全缺失的 DOI / 年份 / 期刊
-- 详情页 Google Scholar 标题搜索入口（Google Scholar 无公开 API，跳转网页手动核对引用信息、下载论文）
+- 详情页"GS 引用"：自动请求 Google Scholar 标题搜索页并解析被引数（同 Zotero GS 插件做法），选择候选即更新引用数/年份/来源；被限流或触发人机验证时降级为网页版手动核对
 - DOI / arXiv ID 可点击跳转原文页（doi.org / arxiv.org）
 
 ### 账户同步
